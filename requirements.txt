@@ -1,0 +1,11 @@
+discord.py
+groq
+flask
+gunicorn
+discord.py
+flask
+groq
+gunicorn
+python-dotenv
+wavelink
+pynacl
