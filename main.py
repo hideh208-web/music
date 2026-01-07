@@ -3,6 +3,7 @@ import asyncio
 import logging
 import json
 import discord
+import sys
 from discord import app_commands
 from discord.ext import commands
 from groq import Groq
@@ -10,8 +11,17 @@ from flask import Flask
 from threading import Thread
 import wavelink
 
+# Ensure stdout is unbuffered for cloud logging
+sys.stdout.reconfigure(line_buffering=True)
+
 # Logging setup
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
 logger = logging.getLogger(__name__)
 
 # Flask server
@@ -23,7 +33,7 @@ def home():
 
 def run_flask():
     port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+    app.run(host='0.0.0.0', port=port, debug=True, use_reloader=False)
 
 def keep_alive():
     t = Thread(target=run_flask)
