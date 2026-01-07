@@ -32,7 +32,9 @@ def home():
     return "I'm alive!"
 
 def run_flask():
+    # Render provides the port via the PORT environment variable
     port = int(os.environ.get('PORT', 5000))
+    logger.info(f"Starting keep-alive server on port {port}")
     app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
 
 def keep_alive():
@@ -297,6 +299,189 @@ async def stop(interaction: discord.Interaction):
         await interaction.response.send_message(embed=create_embed("Stopped", "⏹️ Music stopped and disconnected from voice channel.", discord.Color.blue()))
     else:
         await interaction.response.send_message(embed=create_embed("Error", "I'm not connected to any voice channel.", discord.Color.red()))
+
+@bot.tree.command(name="kick", description="Kick a member from the server")
+@app_commands.checks.has_permissions(kick_members=True)
+async def kick(interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided"):
+    try:
+        await member.kick(reason=reason)
+        embed = create_embed("Member Kicked", f"**{member}** has been kicked.\n**Reason:** {reason}", discord.Color.red())
+        embed.set_thumbnail(url=member.display_avatar.url)
+        await interaction.response.send_message(embed=embed)
+    except Exception as e:
+        await interaction.response.send_message(embed=create_embed("Error", f"Failed to kick member: {e}", discord.Color.red()), ephemeral=True)
+
+@bot.tree.command(name="ban", description="Ban a member from the server")
+@app_commands.checks.has_permissions(ban_members=True)
+async def ban(interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided"):
+    try:
+        await member.ban(reason=reason)
+        embed = create_embed("Member Banned", f"**{member}** has been banned.\n**Reason:** {reason}", discord.Color.dark_red())
+        embed.set_thumbnail(url=member.display_avatar.url)
+        await interaction.response.send_message(embed=embed)
+    except Exception as e:
+        await interaction.response.send_message(embed=create_embed("Error", f"Failed to ban member: {e}", discord.Color.red()), ephemeral=True)
+
+@bot.tree.command(name="clear", description="Clear a specified amount of messages")
+@app_commands.checks.has_permissions(manage_messages=True)
+async def clear(interaction: discord.Interaction, amount: int):
+    if amount < 1:
+        return await interaction.response.send_message("Please specify an amount greater than 0.", ephemeral=True)
+    await interaction.response.defer(ephemeral=True)
+    deleted = await interaction.channel.purge(limit=amount)
+    await interaction.followup.send(embed=create_embed("Messages Cleared", f"Successfully cleared **{len(deleted)}** messages.", discord.Color.green()))
+
+@bot.tree.command(name="serverinfo", description="Display detailed information about this server")
+async def serverinfo(interaction: discord.Interaction):
+    guild = interaction.guild
+    embed = discord.Embed(title=f"🏰 {guild.name}", description=guild.description or "No server description set.", color=discord.Color.blue())
+    
+    # Member counts
+    total_members = guild.member_count
+    bots = len([m for m in guild.members if m.bot])
+    humans = total_members - bots
+    
+    # Formatting bits
+    created_at = guild.created_at.strftime("%B %d, %Y")
+    
+    embed.set_thumbnail(url=guild.icon.url if guild.icon else None)
+    embed.add_field(name="👑 Owner", value=guild.owner.mention, inline=True)
+    embed.add_field(name="🆔 ID", value=guild.id, inline=True)
+    embed.add_field(name="📅 Created On", value=created_at, inline=True)
+    
+    embed.add_field(name="👥 Members", value=f"**Total:** {total_members}\n👤 **Humans:** {humans}\n🤖 **Bots:** {bots}", inline=True)
+    embed.add_field(name="✨ Features", value="\n".join([f"• {f.replace('_', ' ').title()}" for f in guild.features[:5]]) or "None", inline=True)
+    embed.add_field(name="📊 Stats", value=f"🎭 **Roles:** {len(guild.roles)}\n📁 **Categories:** {len(guild.categories)}\n💬 **Text:** {len(guild.text_channels)}\n🔊 **Voice:** {len(guild.voice_channels)}", inline=True)
+    
+    if guild.banner:
+        embed.set_image(url=guild.banner.url)
+    
+    embed.set_footer(text=f"Requested by {interaction.user.name}", icon_url=interaction.user.display_avatar.url)
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="userinfo", description="Display detailed information about a member")
+async def userinfo(interaction: discord.Interaction, member: discord.Member = None):
+    member = member or interaction.user
+    
+    roles = [role.mention for role in member.roles[1:]] # Exclude @everyone
+    roles.reverse()
+    
+    embed = discord.Embed(title=f"👤 User Profile - {member.name}", color=member.color)
+    embed.set_thumbnail(url=member.display_avatar.url)
+    
+    embed.add_field(name="📝 Name", value=f"**{member.name}**#{member.discriminator}", inline=True)
+    embed.add_field(name="🆔 ID", value=member.id, inline=True)
+    embed.add_field(name="🏷️ Nickname", value=member.nick or "None", inline=True)
+    
+    embed.add_field(name="📅 Joined Discord", value=member.created_at.strftime("%B %d, %Y"), inline=True)
+    embed.add_field(name="📥 Joined Server", value=member.joined_at.strftime("%B %d, %Y") if member.joined_at else "Unknown", inline=True)
+    embed.add_field(name="⭐ Top Role", value=member.top_role.mention, inline=True)
+    
+    embed.add_field(name=f"🎭 Roles ({len(roles)})", value=" ".join(roles[:10]) + ("..." if len(roles) > 10 else ""), inline=False)
+    
+    embed.set_footer(text=f"Requested by {interaction.user.name}", icon_url=interaction.user.display_avatar.url)
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="rps", description="Play Rock, Paper, Scissors!")
+async def rps(interaction: discord.Interaction, choice: str):
+    import random
+    choices = ["rock", "paper", "scissors"]
+    bot_choice = random.choice(choices)
+    user_choice = choice.lower()
+    
+    if user_choice not in choices:
+        return await interaction.response.send_message("Please choose either Rock, Paper, or Scissors!", ephemeral=True)
+    
+    result = ""
+    if user_choice == bot_choice:
+        result = "It's a **Draw**! 🤝"
+        color = discord.Color.light_grey()
+    elif (user_choice == "rock" and bot_choice == "scissors") or \
+         (user_choice == "paper" and bot_choice == "rock") or \
+         (user_choice == "scissors" and bot_choice == "paper"):
+        result = "You **Won**! 🎉"
+        color = discord.Color.green()
+    else:
+        result = "You **Lost**! 💀"
+        color = discord.Color.red()
+        
+    emojis = {"rock": "🪨", "paper": "📄", "scissors": "✂️"}
+    
+    embed = discord.Embed(title="Rock Paper Scissors", color=color)
+    embed.add_field(name="You", value=f"{emojis[user_choice]} {user_choice.title()}", inline=True)
+    embed.add_field(name="AI Bot", value=f"{emojis[bot_choice]} {bot_choice.title()}", inline=True)
+    embed.add_field(name="Result", value=result, inline=False)
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="8ball", description="Ask the magic 8-ball a question")
+async def eightball(interaction: discord.Interaction, question: str):
+    import random
+    responses = [
+        "It is certain.", "It is decidedly so.", "Without a doubt.", "Yes - definitely.",
+        "You may rely on it.", "As I see it, yes.", "Most likely.", "Outlook good.",
+        "Yes.", "Signs point to yes.", "Reply hazy, try again.", "Ask again later.",
+        "Better not tell you now.", "Cannot predict now.", "Concentrate and ask again.",
+        "Don't count on it.", "My reply is no.", "My sources say no.",
+        "Outlook not so good.", "Very doubtful."
+    ]
+    
+    embed = discord.Embed(title="🔮 Magic 8-Ball", color=discord.Color.purple())
+    embed.add_field(name="Question", value=question, inline=False)
+    embed.add_field(name="Answer", value=random.choice(responses), inline=False)
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="coinflip", description="Flip a coin and see the result!")
+async def coinflip(interaction: discord.Interaction):
+    import random
+    result = random.choice(["Heads", "Tails"])
+    
+    embed = discord.Embed(title="🪙 Coin Flip", color=discord.Color.gold())
+    
+    if result == "Heads":
+        embed.description = "The coin spins in the air and lands on... **Heads**!"
+        embed.set_thumbnail(url="https://i.imgur.com/vHshU7f.png") # Generic heads icon
+    else:
+        embed.description = "The coin spins in the air and lands on... **Tails**!"
+        embed.set_thumbnail(url="https://i.imgur.com/nCHpEWy.png") # Generic tails icon
+        
+    embed.add_field(name="Result", value=f"✨ It's **{result}**!", inline=False)
+    embed.set_footer(text=f"Flipped by {interaction.user.name}", icon_url=interaction.user.display_avatar.url)
+    
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="avatar", description="View a member's avatar in full size")
+async def avatar(interaction: discord.Interaction, member: discord.Member = None):
+    member = member or interaction.user
+    
+    embed = discord.Embed(title=f"🖼️ {member.name}'s Avatar", color=member.color or discord.Color.blue())
+    embed.set_image(url=member.display_avatar.url)
+    
+    # Add links for different formats if possible
+    avatar_url = member.display_avatar.url
+    embed.description = f"[Download Avatar]({avatar_url})"
+    
+    embed.set_footer(text=f"Requested by {interaction.user.name}", icon_url=interaction.user.display_avatar.url)
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="meme", description="Get a random meme from AI")
+async def meme(interaction: discord.Interaction):
+    await interaction.response.defer()
+    prompt = "Generate a short, funny meme caption or a quick joke related to gaming or discord bots."
+    response = await get_ai_response(prompt)
+    embed = create_embed("AI Meme / Joke", response, discord.Color.random())
+    await interaction.followup.send(embed=embed)
+
+@bot.tree.command(name="poll", description="Create a simple poll")
+async def poll(interaction: discord.Interaction, question: str, option1: str, option2: str):
+    embed = create_embed("Server Poll", f"**{question}**")
+    embed.add_field(name="Option 1", value=f"1️⃣ {option1}", inline=False)
+    embed.add_field(name="Option 2", value=f"2️⃣ {option2}", inline=False)
+    embed.set_footer(text=f"Poll created by {interaction.user.name}")
+    
+    await interaction.response.send_message(embed=embed)
+    message = await interaction.original_response()
+    await message.add_reaction("1️⃣")
+    await message.add_reaction("2️⃣")
 
 @bot.tree.command(name="setup", description="Configure this channel for AI interaction")
 async def setup_channel(interaction: discord.Interaction):
