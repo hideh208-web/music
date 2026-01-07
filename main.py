@@ -48,6 +48,10 @@ if not discord_token or not groq_api_key:
     logger.error("Missing DISCORD_TOKEN or GROQ_API_KEY")
     exit(1)
 
+# Debug: Log Token presence (first 5 chars only for safety)
+logger.info(f"Discord Token present: {discord_token[:5]}...")
+logger.info(f"Groq API Key present: {groq_api_key[:5]}...")
+
 # Groq Client
 groq_client = Groq(api_key=groq_api_key)
 
@@ -104,9 +108,9 @@ async def setup_hook():
     try:
         logger.info(f"Connecting to Lavalink: {node.uri}")
         await wavelink.Pool.connect(nodes=[node], client=bot)
-        logger.info("Successfully connected to D-Radio Lavalink")
+        logger.info(f"Successfully connected to Lavalink Node: {node.uri}")
     except Exception as e:
-        logger.error(f"Lavalink Error: {e}")
+        logger.error(f"Lavalink Connection Failed for {node.uri}: {e}")
     
     logger.info("Syncing slash commands...")
     await bot.tree.sync()
