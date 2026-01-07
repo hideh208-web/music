@@ -16,7 +16,7 @@ sys.stdout.reconfigure(line_buffering=True)
 
 # Logging setup
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(sys.stdout)
@@ -33,7 +33,7 @@ def home():
 
 def run_flask():
     port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=True, use_reloader=False)
+    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
 
 def keep_alive():
     t = Thread(target=run_flask)
@@ -49,8 +49,8 @@ if not discord_token or not groq_api_key:
     exit(1)
 
 # Debug: Log Token presence (first 5 chars only for safety)
-logger.info(f"Discord Token present: {discord_token[:5]}...")
-logger.info(f"Groq API Key present: {groq_api_key[:5]}...")
+# logger.info(f"Discord Token present: {discord_token[:5]}...")
+# logger.info(f"Groq API Key present: {groq_api_key[:5]}...")
 
 # Groq Client
 groq_client = Groq(api_key=groq_api_key)
@@ -113,8 +113,20 @@ async def setup_hook():
         logger.error(f"Lavalink Connection Failed for {node.uri}: {e}")
     
     logger.info("Syncing slash commands...")
-    await bot.tree.sync()
-    logger.info("Slash commands synced!")
+    try:
+        await bot.tree.sync()
+        logger.info("Slash commands synced!")
+    except Exception as e:
+        logger.error(f"Failed to sync slash commands: {e}")
+
+@bot.event
+async def on_wavelink_node_closed(node: wavelink.Node, disconnected: bool):
+    if disconnected:
+        logger.warning(f"Lavalink Node {node.uri} disconnected. Attempting to reconnect...")
+        try:
+            await node.connect()
+        except Exception as e:
+            logger.error(f"Reconnection to Lavalink Node {node.uri} failed: {e}")
 
 bot.setup_hook = setup_hook
 
