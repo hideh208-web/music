@@ -58,6 +58,11 @@ async def setup_hook():
         logger.info("Successfully connected to D-Radio Lavalink")
     except Exception as e:
         logger.error(f"Lavalink Error: {e}")
+    
+    # Sync slash commands globally
+    logger.info("Syncing slash commands...")
+    await bot.tree.sync()
+    logger.info("Slash commands synced!")
 
 bot.setup_hook = setup_hook
 
@@ -80,7 +85,6 @@ def save_channel_config(guild_id, channel_id):
 @bot.event
 async def on_ready():
     logger.info(f"Logged in as {bot.user}")
-    await bot.tree.sync()
     await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="AI & Music"))
 
 @bot.tree.command(name="play", description="Play music")
