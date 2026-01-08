@@ -84,12 +84,15 @@ class MusicControlView(discord.ui.View):
             button.emoji = "⏸️"
             status = "resumed"
         
+        # Explicitly update the view and edit the message
         await interaction.message.edit(view=self)
         await interaction.followup.send(f"Music {status}!", ephemeral=True)
 
     @discord.ui.button(label="Vol -", style=discord.ButtonStyle.secondary, emoji="🔉")
     async def volume_down(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=True)
+        if not self.player:
+             return await interaction.followup.send("Player not found.", ephemeral=True)
         current_vol = self.player.volume
         new_vol = max(0, current_vol - 10)
         await self.player.set_volume(new_vol)
@@ -98,6 +101,8 @@ class MusicControlView(discord.ui.View):
     @discord.ui.button(label="Vol +", style=discord.ButtonStyle.secondary, emoji="🔊")
     async def volume_up(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=True)
+        if not self.player:
+             return await interaction.followup.send("Player not found.", ephemeral=True)
         current_vol = self.player.volume
         new_vol = min(100, current_vol + 10)
         await self.player.set_volume(new_vol)
@@ -152,6 +157,7 @@ class MusicControlView(discord.ui.View):
         for i, t in enumerate(upcoming):
             requester = getattr(t, 'requester', None)
             req_name = requester.name if requester else "Unknown"
+            # Format: Title | Author (Added by: Name)
             queue_list.append(f"`{i+1}.` **{t.title}** | {t.author} (Added by: {req_name})")
         
         final_list = "\n".join(queue_list)
@@ -198,7 +204,7 @@ bot.setup_hook = setup_hook
 
 def create_embed(title, description, color=discord.Color.blue()):
     embed = discord.Embed(title=title, description=description, color=color)
-    embed.set_footer(text="AI Music Bot • Powered by Groq & Wavelink")
+    embed.set_footer(text="Powered by Aditya Official NGT Team")
     return embed
 
 def get_track_embed(title, track):
@@ -212,7 +218,7 @@ def get_track_embed(title, track):
     embed.add_field(name="Duration", value=duration, inline=True)
     if hasattr(track, 'artwork'):
         embed.set_thumbnail(url=track.artwork)
-    embed.set_footer(text="AI Music Bot • Powered by Groq & Wavelink")
+    embed.set_footer(text="Powered by Aditya Official NGT Team")
     return embed
 
 @bot.event
@@ -235,11 +241,12 @@ async def on_wavelink_track_end(payload: wavelink.TrackEndEventPayload):
     player: wavelink.Player = payload.player
     
     # Delete the old control panel
-    if hasattr(player, 'controller_message'):
+    if hasattr(player, 'controller_message') and player.controller_message:
         try:
             await player.controller_message.delete()
         except:
             pass
+        player.controller_message = None # Clear the reference
 
     if not player.queue.is_empty:
         next_track = await player.queue.get_wait()
@@ -285,6 +292,10 @@ async def play(interaction: discord.Interaction, search: str):
         # Attach the requester to the track object
         track.requester = interaction.user
         
+        # Deafen the bot when joining
+        vc: wavelink.Player = interaction.guild.voice_client or await interaction.user.voice.channel.connect(cls=wavelink.Player, self_deaf=True)
+        vc.home_channel = interaction.channel
+        
         # Get track embed for immediate response
         embed = get_track_embed("Playing Now", track)
         embed.color = discord.Color.green()
@@ -296,8 +307,7 @@ async def play(interaction: discord.Interaction, search: str):
         else:
             await vc.play(track)
             # Fix thinking state: acknowledge the play command with the actual track info
-            await interaction.followup.send(embed=embed)
-            
+            await interaction.followup.send(embed=embed)    
     except Exception as e:
         # Fix thinking state
         await interaction.followup.send(embed=create_embed("Error", f"An error occurred: `{str(e)}`", discord.Color.red()))
@@ -320,8 +330,8 @@ async def join(interaction: discord.Interaction):
         return await interaction.response.send_message(embed=create_embed("Error", "You need to join a voice channel first!", discord.Color.red()))
     
     try:
-        await interaction.user.voice.channel.connect(cls=wavelink.Player)
-        await interaction.response.send_message(embed=create_embed("Joined", f"✅ Connected to **{interaction.user.voice.channel.name}**", discord.Color.green()))
+        await interaction.user.voice.channel.connect(cls=wavelink.Player, self_deaf=True)
+        await interaction.response.send_message(embed=create_embed("Joined", f"✅ Connected to **{interaction.user.voice.channel.name}** (Deafened)", discord.Color.green()))
     except Exception as e:
         await interaction.response.send_message(embed=create_embed("Error", f"Could not connect: `{e}`", discord.Color.red()))
 
@@ -613,6 +623,116 @@ async def coinflip(interaction: discord.Interaction, choice: app_commands.Choice
     
     await interaction.response.send_message(embed=embed)
 
+@bot.tree.command(name="antinuke", description="Enable or disable anti-nuke protection")
+@app_commands.describe(status="Enable or Disable anti-nuke")
+@app_commands.choices(status=[
+    app_commands.Choice(name="Enable", value="on"),
+    app_commands.Choice(name="Disable", value="off")
+])
+@app_commands.checks.has_permissions(administrator=True)
+async def antinuke(interaction: discord.Interaction, status: app_commands.Choice[str]):
+    config = {}
+    try:
+        with open("antinuke_config.json", "r") as f:
+            config = json.load(f)
+    except:
+        pass
+    
+    is_enabled = status.value == "on"
+    config[str(interaction.guild.id)] = is_enabled
+    with open("antinuke_config.json", "w") as f:
+        json.dump(config, f)
+        
+    embed = discord.Embed(
+        title="🛡️ Anti-Nuke System",
+        description=f"The anti-nuke protection has been successfully **{status.name.lower()}d**.",
+        color=discord.Color.green() if is_enabled else discord.Color.red()
+    )
+    
+    if is_enabled:
+        embed.add_field(
+            name="✨ Protections Active",
+            value="• **Channel Protection:** Bans users who delete channels.\n"
+                  "• **Role Protection:** Bans users who delete roles.\n"
+                  "• **Bot Protection:** Bans both the unauthorized bot and the user who added it.",
+            inline=False
+        )
+        embed.set_footer(text="Powered by Aditya Official NGT Team • Monitoring Active")
+    else:
+        embed.add_field(
+            name="⚠️ Warning",
+            value="Your server is now vulnerable to nuking attempts. It is recommended to keep this enabled.",
+            inline=False
+        )
+        embed.set_footer(text="Powered by Aditya Official NGT Team • Monitoring Disabled")
+        
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.event
+async def on_guild_channel_delete(channel):
+    try:
+        with open("antinuke_config.json", "r") as f:
+            config = json.load(f)
+            if not config.get(str(channel.guild.id)):
+                return
+    except:
+        return
+
+    async for entry in channel.guild.audit_logs(limit=1, action=discord.AuditLogAction.channel_delete):
+        user = entry.user
+        if user.id == channel.guild.owner_id or user.id == bot.user.id:
+            return
+        
+        try:
+            await channel.guild.ban(user, reason="Anti-nuke: Channel deletion detected")
+            logger.info(f"Anti-nuke: Banned {user} for deleting channel {channel.name}")
+        except:
+            pass
+
+@bot.event
+async def on_guild_role_delete(role):
+    try:
+        with open("antinuke_config.json", "r") as f:
+            config = json.load(f)
+            if not config.get(str(role.guild.id)):
+                return
+    except:
+        return
+
+    async for entry in role.guild.audit_logs(limit=1, action=discord.AuditLogAction.role_delete):
+        user = entry.user
+        if user.id == role.guild.owner_id or user.id == bot.user.id:
+            return
+        
+        try:
+            await role.guild.ban(user, reason="Anti-nuke: Role deletion detected")
+            logger.info(f"Anti-nuke: Banned {user} for deleting role {role.name}")
+        except:
+            pass
+
+@bot.event
+async def on_member_join(member):
+    try:
+        with open("antinuke_config.json", "r") as f:
+            config = json.load(f)
+            if not config.get(str(member.guild.id)):
+                return
+    except:
+        return
+
+    if member.bot:
+        async for entry in member.guild.audit_logs(limit=1, action=discord.AuditLogAction.bot_add):
+            user = entry.user
+            if user.id == member.guild.owner_id or user.id == bot.user.id:
+                return
+            
+            try:
+                await member.ban(reason="Anti-nuke: Unauthorized bot addition")
+                await member.guild.ban(user, reason="Anti-nuke: Adding unauthorized bot")
+                logger.info(f"Anti-nuke: Banned {user} for adding bot {member}")
+            except:
+                pass
+
 @bot.tree.command(name="avatar", description="View a member's avatar in full size")
 async def avatar(interaction: discord.Interaction, member: discord.Member = None):
     member = member or interaction.user
@@ -713,9 +833,26 @@ def get_prefix(bot, message):
 
 bot.command_prefix = get_prefix
 
-@bot.tree.command(name="prefix", description="Change the bot's prefix for this server")
-@app_commands.checks.has_permissions(manage_guild=True)
-async def prefix(interaction: discord.Interaction, new_prefix: str):
+@bot.tree.command(name="role", description="Give or remove a role from a member")
+@app_commands.describe(member="The member to manage", role="The role to give/remove")
+@app_commands.checks.has_permissions(manage_roles=True)
+async def role(interaction: discord.Interaction, member: discord.Member, role: discord.Role):
+    """Gives or removes a role from a member. Requires Manage Roles permission."""
+    try:
+        if role in member.roles:
+            await member.remove_roles(role)
+            await interaction.response.send_message(f"✅ Removed role **{role.name}** from **{member.name}**", ephemeral=True)
+        else:
+            await member.add_roles(role)
+            await interaction.response.send_message(f"✅ Added role **{role.name}** to **{member.name}**", ephemeral=True)
+    except discord.Forbidden:
+        await interaction.response.send_message("❌ I don't have permission to manage this role! Make sure my role is above it in the server settings.", ephemeral=True)
+    except Exception as e:
+        await interaction.response.send_message(f"❌ Error: {e}", ephemeral=True)
+
+@bot.command(name="prefix")
+@commands.has_permissions(manage_guild=True)
+async def prefix_legacy(ctx, new_prefix: str):
     """Changes the command prefix for this server. Requires Manage Server permission."""
     try:
         prefixes = {}
@@ -725,13 +862,13 @@ async def prefix(interaction: discord.Interaction, new_prefix: str):
         except:
             pass
             
-        prefixes[str(interaction.guild.id)] = new_prefix
+        prefixes[str(ctx.guild.id)] = new_prefix
         with open("prefixes.json", "w") as f:
             json.dump(prefixes, f)
             
-        await interaction.response.send_message(f"✅ Success! The bot's prefix for this server has been changed to: `{new_prefix}`", ephemeral=True)
+        await ctx.send(f"✅ Success! The bot's prefix for this server has been changed to: `{new_prefix}`")
     except Exception as e:
-        await interaction.response.send_message(f"❌ Error: {e}", ephemeral=True)
+        await ctx.send(f"❌ Error: {e}")
 
 @bot.tree.command(name="automod", description="Setup basic automod (anti-spam, anti-invite, blacklist)")
 @app_commands.describe(type="Type of protection", action="Action to take", words="Comma separated words for blacklist (only for Blacklist type)")
@@ -834,16 +971,11 @@ async def on_message(message):
     if bot.user.mentioned_in(message) and content.lower().startswith('play '):
         search = content[5:].strip()
         if search:
-            # Get the command and invoke it
-            ctx = await bot.get_context(message)
-            # We can't easily invoke a slash command as a prefix command without refactoring,
-            # so we'll implement the logic directly or call the function.
-            # However, for simplicity and since it's a small edit, let's trigger the play logic.
             if not message.author.voice:
                 return await message.channel.send(embed=create_embed("Error", "You need to join a voice channel first!", discord.Color.red()))
             
             try:
-                vc: wavelink.Player = message.guild.voice_client or await message.author.voice.channel.connect(cls=wavelink.Player)
+                vc: wavelink.Player = message.guild.voice_client or await message.author.voice.channel.connect(cls=wavelink.Player, self_deaf=True)
                 vc.home_channel = message.channel
                 
                 tracks = await wavelink.Playable.search(search)
@@ -868,12 +1000,14 @@ async def on_message(message):
             except Exception as e:
                 return await message.channel.send(embed=create_embed("Error", f"An error occurred: `{str(e)}`", discord.Color.red()))
 
+    # Process legacy prefix commands
+    await bot.process_commands(message)
+
     if (channel_id and message.channel.id == channel_id) or bot.user.mentioned_in(message):
         async with message.channel.typing():
             response = await get_ai_response(content)
             for i in range(0, len(response), 2000):
                 await message.reply(response[i:i+2000])
-    await bot.process_commands(message)
 
 if __name__ == "__main__":
     keep_alive()
