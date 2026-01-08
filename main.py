@@ -248,9 +248,18 @@ async def on_wavelink_track_end(payload: wavelink.TrackEndEventPayload):
             pass
         player.controller_message = None # Clear the reference
 
+    # Handle looping
+    if player.queue.loop:
+        await player.play(payload.track)
+        return
+
     if not player.queue.is_empty:
         next_track = await player.queue.get_wait()
         await player.play(next_track)
+    elif player.queue.loop_all:
+        # If queue loop is on and queue is empty, we'd need history or just re-add
+        # For simple wavelink queue, we usually just re-play from a stored history if implemented
+        pass
 
 def load_channel_config():
     try:
@@ -623,6 +632,50 @@ async def coinflip(interaction: discord.Interaction, choice: app_commands.Choice
     
     await interaction.response.send_message(embed=embed)
 
+@bot.tree.command(name="pause", description="Pause the current music")
+async def pause(interaction: discord.Interaction):
+    vc: wavelink.Player = interaction.guild.voice_client
+    if not vc or not vc.playing:
+        return await interaction.response.send_message(embed=create_embed("Error", "Nothing is playing.", discord.Color.red()))
+    
+    await vc.set_pause(True)
+    
+    # Update control panel if it exists
+    if hasattr(vc, 'controller_message') and vc.controller_message:
+        view = MusicControlView(vc)
+        for item in view.children:
+            if isinstance(item, discord.ui.Button) and item.label in ["Pause", "Resume"]:
+                item.label = "Resume"
+                item.emoji = "▶️"
+        try:
+            await vc.controller_message.edit(view=view)
+        except:
+            pass
+            
+    await interaction.response.send_message(embed=create_embed("Paused", "⏸️ Music has been paused."))
+
+@bot.tree.command(name="resume", description="Resume the current music")
+async def resume(interaction: discord.Interaction):
+    vc: wavelink.Player = interaction.guild.voice_client
+    if not vc or not vc.paused:
+        return await interaction.response.send_message(embed=create_embed("Error", "Music is not paused.", discord.Color.red()))
+    
+    await vc.set_pause(False)
+    
+    # Update control panel if it exists
+    if hasattr(vc, 'controller_message') and vc.controller_message:
+        view = MusicControlView(vc)
+        for item in view.children:
+            if isinstance(item, discord.ui.Button) and item.label in ["Pause", "Resume"]:
+                item.label = "Pause"
+                item.emoji = "⏸️"
+        try:
+            await vc.controller_message.edit(view=view)
+        except:
+            pass
+            
+    await interaction.response.send_message(embed=create_embed("Resumed", "▶️ Music has been resumed."))
+
 @bot.tree.command(name="antinuke", description="Enable or disable anti-nuke protection")
 @app_commands.describe(status="Enable or Disable anti-nuke")
 @app_commands.choices(status=[
@@ -852,21 +905,36 @@ async def role(interaction: discord.Interaction, member: discord.Member, role: d
 
 @bot.command(name="prefix")
 @commands.has_permissions(manage_guild=True)
-async def prefix_legacy(ctx, new_prefix: str):
+async def set_prefix(ctx, new_prefix: str):
     """Changes the command prefix for this server. Requires Manage Server permission."""
     try:
+        # Load existing prefixes
         prefixes = {}
         try:
-            with open("prefixes.json", "r") as f:
-                prefixes = json.load(f)
+            if os.path.exists("prefixes.json"):
+                with open("prefixes.json", "r") as f:
+                    prefixes = json.load(f)
         except:
             pass
             
+        # Set the NEW prefix (replaces the old one)
         prefixes[str(ctx.guild.id)] = new_prefix
+        
+        # Save back to file
         with open("prefixes.json", "w") as f:
             json.dump(prefixes, f)
             
-        await ctx.send(f"✅ Success! The bot's prefix for this server has been changed to: `{new_prefix}`")
+        # Update the bot's current prefix mapping if it's already running
+        # (Though the get_prefix function will handle it on next command)
+            
+        embed = discord.Embed(
+            title="✅ Prefix Updated",
+            description=f"The command prefix for this server has been changed to: `{new_prefix}`",
+            color=discord.Color.green()
+        )
+        embed.set_footer(text="Powered by Aditya Official NGT Team")
+        await ctx.send(embed=embed)
+        
     except Exception as e:
         await ctx.send(f"❌ Error: {e}")
 
