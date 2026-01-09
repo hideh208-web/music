@@ -1137,8 +1137,26 @@ async def on_message(message):
             config = load_channel_config()
     channel_id = config["channels"].get(str(message.guild.id))
 
+    # Process legacy prefix commands
+    await bot.process_commands(message)
+
     # Handle song play on mention
     content = message.content.replace(f'<@!{bot.user.id}>', '').replace(f'<@{bot.user.id}>', '').strip()
+    
+    # Check if AI should respond (Setup channel or mention)
+    should_respond = False
+    if channel_id and message.channel.id == channel_id:
+        should_respond = True
+    elif bot.user.mentioned_in(message):
+        should_respond = True
+        
+    if should_respond and not content.lower().startswith(('play ', 'skip', 'stop', 'queue', 'pause', 'resume')):
+        async with message.channel.typing():
+            response = await get_ai_response(content)
+            for i in range(0, len(response), 2000):
+                await message.reply(response[i:i+2000])
+        return
+
     if bot.user.mentioned_in(message) and content.lower().startswith('play '):
         search = content[5:].strip()
         if search:
@@ -1173,12 +1191,6 @@ async def on_message(message):
 
     # Process legacy prefix commands
     await bot.process_commands(message)
-
-    if (channel_id and message.channel.id == channel_id) or bot.user.mentioned_in(message):
-        async with message.channel.typing():
-            response = await get_ai_response(content)
-            for i in range(0, len(response), 2000):
-                await message.reply(response[i:i+2000])
 
 if __name__ == "__main__":
     keep_alive()
