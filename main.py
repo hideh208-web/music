@@ -267,9 +267,17 @@ async def on_wavelink_track_end(payload: wavelink.TrackEndEventPayload):
 
 def load_channel_config():
     try:
+        if not os.path.exists('channel_config.json'):
+            with open('channel_config.json', 'w') as f:
+                json.dump({"channels": {}}, f)
+            return {"channels": {}}
         with open('channel_config.json', 'r') as f:
-            return json.load(f)
-    except:
+            data = json.load(f)
+            if "channels" not in data:
+                return {"channels": {}}
+            return data
+    except Exception as e:
+        logger.error(f"Error loading config: {e}")
         return {"channels": {}}
 
 def save_channel_config(guild_id, channel_id):
@@ -310,7 +318,7 @@ async def play(interaction: discord.Interaction, search: str):
             vc: wavelink.Player = await interaction.user.voice.channel.connect(cls=wavelink.Player, self_deaf=True)
         else:
             vc: wavelink.Player = interaction.guild.voice_client
-            
+
         vc.home_channel = interaction.channel
 
         # Get track embed for immediate response
@@ -655,7 +663,7 @@ async def pause(interaction: discord.Interaction):
     vc: wavelink.Player = interaction.guild.voice_client
     if not vc:
         return await interaction.response.send_message(embed=create_embed("Error", "The bot is not in a voice channel.", discord.Color.red()))
-    
+
     if not vc.playing and not vc.paused:
         return await interaction.response.send_message(embed=create_embed("Error", "Nothing is playing.", discord.Color.red()))
 
@@ -683,7 +691,7 @@ async def resume(interaction: discord.Interaction):
     vc: wavelink.Player = interaction.guild.voice_client
     if not vc:
         return await interaction.response.send_message(embed=create_embed("Error", "The bot is not in a voice channel.", discord.Color.red()))
-        
+
     if not vc.paused:
         return await interaction.response.send_message(embed=create_embed("Error", "Music is not paused.", discord.Color.red()))
 
@@ -850,18 +858,29 @@ async def poll(interaction: discord.Interaction, question: str, option1: str, op
 @bot.tree.command(name="setup", description="Configure this channel for AI interaction")
 async def setup_channel(interaction: discord.Interaction):
     save_channel_config(interaction.guild_id, interaction.channel_id)
-    await interaction.response.send_message(embed=create_embed("Setup Complete", "✅ This channel has been successfully configured for AI responses.", discord.Color.green()), ephemeral=True)
+    await interaction.response.send_message(embed=create_embed("AI Setup Complete", "✅ This channel has been successfully configured for AI responses. I will now respond to messages in this channel.", discord.Color.green()), ephemeral=True)
+
+@bot.tree.command(name="remove", description="Remove AI interaction from this guild")
+async def remove_channel(interaction: discord.Interaction):
+    save_channel_config(interaction.guild_id, None)
+    await interaction.response.send_message(embed=create_embed("AI Removed", "❌ AI interaction has been disabled for this guild.", discord.Color.red()), ephemeral=True)
 
 async def get_ai_response(content):
     try:
         completion = await asyncio.to_thread(
             groq_client.chat.completions.create,
-            messages=[{"role": "user", "content": content}],
+            messages=[
+                {"role": "system", "content": "You are a helpful and friendly Discord AI music bot assistant."},
+                {"role": "user", "content": content}
+            ],
             model="llama-3.3-70b-versatile",
+            temperature=0.7,
+            max_tokens=1024
         )
         return completion.choices[0].message.content
     except Exception as e:
-        return f"AI Error: {e}"
+        logger.error(f"Groq API Error: {e}")
+        return "⚠️ I'm having trouble connecting to my brain right now. Please try again in a moment!"
 
 @bot.tree.command(name="steal", description="Steal an emoji from another server")
 @app_commands.checks.has_permissions(manage_expressions=True)
@@ -1012,23 +1031,23 @@ async def whitelist(interaction: discord.Interaction, member: discord.Member):
         if os.path.exists("automod.json"):
             with open("automod.json", "r") as f:
                 config = json.load(f)
-        
+
         if guild_id not in config:
             config[guild_id] = {}
-        
+
         whitelist_list = config[guild_id].get("whitelist", [])
-        
+
         if member.id in whitelist_list:
             whitelist_list.remove(member.id)
             msg = f"Removed **{member}** from the whitelist."
         else:
             whitelist_list.append(member.id)
             msg = f"Added **{member}** to the whitelist."
-        
+
         config[guild_id]["whitelist"] = whitelist_list
         with open("automod.json", "w") as f:
             json.dump(config, f)
-            
+
         await interaction.response.send_message(embed=create_embed("AutoMod Whitelist", msg, discord.Color.green()), ephemeral=True)
     except Exception as e:
         await interaction.response.send_message(f"Error: {e}", ephemeral=True)
@@ -1049,7 +1068,7 @@ async def on_message(message):
                     config = json.load(f).get(str(message.guild.id), {})
 
             whitelist = config.get("whitelist", [])
-            
+
             # Bypass for admins, moderators, and whitelisted users
             if not message.author.guild_permissions.manage_messages and message.author.id not in whitelist:
                 # Anti-Invite
@@ -1134,22 +1153,19 @@ async def on_message(message):
                 return
 
             # Rest of the on_message logic...
-            config = load_channel_config()
-    channel_id = config["channels"].get(str(message.guild.id))
-
-    # Process legacy prefix commands
-    await bot.process_commands(message)
+    config = load_channel_config()
+    channel_id = config.get("channels", {}).get(str(message.guild.id))
 
     # Handle song play on mention
     content = message.content.replace(f'<@!{bot.user.id}>', '').replace(f'<@{bot.user.id}>', '').strip()
-    
+
     # Check if AI should respond (Setup channel or mention)
     should_respond = False
     if channel_id and message.channel.id == channel_id:
         should_respond = True
     elif bot.user.mentioned_in(message):
         should_respond = True
-        
+
     if should_respond and not content.lower().startswith(('play ', 'skip', 'stop', 'queue', 'pause', 'resume')):
         async with message.channel.typing():
             response = await get_ai_response(content)
