@@ -73,18 +73,19 @@ class MusicControlView(discord.ui.View):
         await interaction.response.defer(ephemeral=True)
         if not self.player or not self.player.playing:
             return await interaction.followup.send("Nothing is playing.", ephemeral=True)
-        
-        await self.player.set_pause(not self.player.paused)
+
+        # Sync state
         if self.player.paused:
-            button.label = "Resume"
-            button.emoji = "▶️"
-            status = "paused"
-        else:
+            await self.player.set_pause(False)
             button.label = "Pause"
             button.emoji = "⏸️"
             status = "resumed"
-        
-        # Explicitly update the view and edit the message
+        else:
+            await self.player.set_pause(True)
+            button.label = "Resume"
+            button.emoji = "▶️"
+            status = "paused"
+
         await interaction.message.edit(view=self)
         await interaction.followup.send(f"Music {status}!", ephemeral=True)
 
@@ -113,7 +114,7 @@ class MusicControlView(discord.ui.View):
         await interaction.response.defer(ephemeral=True)
         if not self.player or not self.player.playing:
             return await interaction.followup.send("Nothing is playing.", ephemeral=True)
-        
+
         await self.player.skip()
         await interaction.followup.send("Skipped the song!", ephemeral=True)
 
@@ -122,10 +123,10 @@ class MusicControlView(discord.ui.View):
         await interaction.response.defer(ephemeral=True)
         if not self.player or not self.player.playing:
             return await interaction.followup.send("Nothing is playing.", ephemeral=True)
-        
+
         if not hasattr(self.player.queue, 'loop_all'):
             self.player.queue.loop_all = False
-            
+
         if not self.player.queue.loop and not self.player.queue.loop_all:
             self.player.queue.loop = True
             msg = "Looping: **Track** 🔂"
@@ -137,7 +138,7 @@ class MusicControlView(discord.ui.View):
             self.player.queue.loop = False
             self.player.queue.loop_all = False
             msg = "Looping: **Off** ❌"
-            
+
         await interaction.followup.send(msg, ephemeral=True)
 
     @discord.ui.button(label="Stop", style=discord.ButtonStyle.danger, emoji="⏹️")
@@ -151,7 +152,7 @@ class MusicControlView(discord.ui.View):
         await interaction.response.defer(ephemeral=True)
         if self.player.queue.is_empty:
             return await interaction.followup.send("The queue is empty.", ephemeral=True)
-        
+
         upcoming = list(self.player.queue)[:10]
         queue_list = []
         for i, t in enumerate(upcoming):
@@ -159,16 +160,16 @@ class MusicControlView(discord.ui.View):
             req_name = requester.name if requester else "Unknown"
             # Format: Title | Author (Added by: Name)
             queue_list.append(f"`{i+1}.` **{t.title}** | {t.author} (Added by: {req_name})")
-        
+
         final_list = "\n".join(queue_list)
-        
+
         embed = discord.Embed(
             title="📜 Current Music Queue",
             description=f"Showing next {len(upcoming)} tracks:\n\n{final_list}",
             color=discord.Color.blue()
         )
         embed.set_footer(text=f"Total tracks in queue: {len(self.player.queue)}")
-        
+
         await interaction.followup.send(embed=embed, ephemeral=True)
 
 async def setup_hook():
@@ -183,7 +184,7 @@ async def setup_hook():
         logger.info(f"Successfully connected to Lavalink Node: {node.uri}")
     except Exception as e:
         logger.error(f"Lavalink Connection Failed for {node.uri}: {e}")
-    
+
     logger.info("Syncing slash commands...")
     try:
         await bot.tree.sync()
@@ -225,11 +226,11 @@ def get_track_embed(title, track):
 async def on_wavelink_track_start(payload: wavelink.TrackStartEventPayload):
     player: wavelink.Player = payload.player
     track = payload.track
-    
+
     # We no longer send a separate embed here if it was triggered by /play 
     # as /play now handles the initial response to clear the 'thinking' state.
     # However, for auto-playing next tracks in queue, we might still want it.
-    
+
     if not hasattr(player, 'controller_message') or player.controller_message is None:
         if hasattr(player, 'home_channel'):
             embed = get_track_embed("Now Playing", track)
@@ -239,7 +240,7 @@ async def on_wavelink_track_start(payload: wavelink.TrackStartEventPayload):
 @bot.event
 async def on_wavelink_track_end(payload: wavelink.TrackEndEventPayload):
     player: wavelink.Player = payload.player
-    
+
     # Delete the old control panel
     if hasattr(player, 'controller_message') and player.controller_message:
         try:
@@ -286,29 +287,29 @@ async def on_ready():
 async def play(interaction: discord.Interaction, search: str):
     if not interaction.user.voice:
         return await interaction.response.send_message(embed=create_embed("Error", "You need to join a voice channel first!", discord.Color.red()))
-    
+
     await interaction.response.defer()
     try:
         vc: wavelink.Player = interaction.guild.voice_client or await interaction.user.voice.channel.connect(cls=wavelink.Player)
         vc.home_channel = interaction.channel
-        
+
         tracks = await wavelink.Playable.search(search)
         if not tracks:
             # Fix thinking state
             return await interaction.followup.send(embed=create_embed("Not Found", f"No tracks found for: `{search}`", discord.Color.orange()))
-        
+
         track = tracks[0]
         # Attach the requester to the track object
         track.requester = interaction.user
-        
+
         # Deafen the bot when joining
         vc: wavelink.Player = interaction.guild.voice_client or await interaction.user.voice.channel.connect(cls=wavelink.Player, self_deaf=True)
         vc.home_channel = interaction.channel
-        
+
         # Get track embed for immediate response
         embed = get_track_embed("Playing Now", track)
         embed.color = discord.Color.green()
-        
+
         if vc.playing:
             await vc.queue.put_wait(track)
             embed.title = "Added to Queue"
@@ -326,10 +327,10 @@ async def volume(interaction: discord.Interaction, level: int):
     vc: wavelink.Player = interaction.guild.voice_client
     if not vc:
         return await interaction.response.send_message(embed=create_embed("Error", "I'm not connected to any voice channel.", discord.Color.red()))
-    
+
     if not 0 <= level <= 100:
         return await interaction.response.send_message(embed=create_embed("Invalid Volume", "Please provide a volume level between 0 and 100.", discord.Color.orange()))
-    
+
     await vc.set_volume(level)
     await interaction.response.send_message(embed=create_embed("Volume Updated", f"🔊 Volume has been set to **{level}%**", discord.Color.blue()))
 
@@ -337,7 +338,7 @@ async def volume(interaction: discord.Interaction, level: int):
 async def join(interaction: discord.Interaction):
     if not interaction.user.voice:
         return await interaction.response.send_message(embed=create_embed("Error", "You need to join a voice channel first!", discord.Color.red()))
-    
+
     try:
         await interaction.user.voice.channel.connect(cls=wavelink.Player, self_deaf=True)
         await interaction.response.send_message(embed=create_embed("Joined", f"✅ Connected to **{interaction.user.voice.channel.name}** (Deafened)", discord.Color.green()))
@@ -356,10 +357,10 @@ async def filter_cmd(interaction: discord.Interaction, name: app_commands.Choice
     vc: wavelink.Player = interaction.guild.voice_client
     if not vc:
         return await interaction.response.send_message(embed=create_embed("Error", "I'm not connected to a voice channel! Join one first.", discord.Color.red()))
-    
+
     filters = wavelink.Filters()
     filter_name = name.value
-    
+
     if filter_name == "bassboost":
         filters.equalizer = wavelink.Equalizer.boost()
         msg = "🎸 **Bassboost** filter applied!"
@@ -374,7 +375,7 @@ async def filter_cmd(interaction: discord.Interaction, name: app_commands.Choice
     elif filter_name == "clear":
         filters = wavelink.Filters()
         msg = "✨ Audio filters **cleared**!"
-    
+
     await vc.set_filters(filters)
     await interaction.response.send_message(embed=create_embed("Filter Applied", msg, discord.Color.blue()))
 
@@ -392,11 +393,11 @@ async def queue(interaction: discord.Interaction):
     vc: wavelink.Player = interaction.guild.voice_client
     if not vc or (not vc.playing and vc.queue.is_empty):
         return await interaction.response.send_message(embed=create_embed("Queue Empty", "The queue is currently empty.", discord.Color.orange()))
-    
+
     description = ""
     if vc.playing:
         description += f"**Currently Playing:**\n{vc.current.title}\n\n"
-    
+
     if not vc.queue.is_empty:
         description += "**Up Next:**\n"
         for i, t in enumerate(vc.queue):
@@ -404,7 +405,7 @@ async def queue(interaction: discord.Interaction):
             if i >= 9:
                 description += f"... and {len(vc.queue) - 10} more"
                 break
-    
+
     await interaction.response.send_message(embed=create_embed("Music Queue", description or "Nothing in queue."))
 
 @bot.tree.command(name="stop", description="Stop music and clear queue")
@@ -427,7 +428,7 @@ async def loop(interaction: discord.Interaction, mode: app_commands.Choice[str])
     vc: wavelink.Player = interaction.guild.voice_client
     if not vc:
         return await interaction.response.send_message(embed=create_embed("Error", "I'm not connected to any voice channel.", discord.Color.red()))
-    
+
     if mode.value == "off":
         vc.queue.loop = False
         vc.queue.loop_all = False
@@ -440,7 +441,7 @@ async def loop(interaction: discord.Interaction, mode: app_commands.Choice[str])
         vc.queue.loop = False
         vc.queue.loop_all = True
         msg = "Now looping the **entire queue**."
-    
+
     await interaction.response.send_message(embed=create_embed("Loop Updated", f"🔁 {msg}", discord.Color.blue()))
 
 @bot.tree.command(name="stay", description="Toggle 24/7 mode (prevent bot from leaving)")
@@ -448,7 +449,7 @@ async def stay(interaction: discord.Interaction):
     vc: wavelink.Player = interaction.guild.voice_client
     if not vc:
         return await interaction.response.send_message(embed=create_embed("Error", "I'm not connected to any voice channel.", discord.Color.red()))
-    
+
     # Simple toggle for wavelink player's behavior if supported or just simulate
     if hasattr(vc, 'stay_247') and vc.stay_247:
         vc.stay_247 = False
@@ -456,7 +457,7 @@ async def stay(interaction: discord.Interaction):
     else:
         vc.stay_247 = True
         msg = "24/7 mode **enabled**."
-        
+
     await interaction.response.send_message(embed=create_embed("24/7 Mode", f"🕒 {msg}", discord.Color.blue()))
 
 @bot.tree.command(name="kick", description="Kick a member from the server")
@@ -494,56 +495,56 @@ async def clear(interaction: discord.Interaction, amount: int):
 async def serverinfo(interaction: discord.Interaction):
     guild = interaction.guild
     embed = discord.Embed(title=f"🏰 {guild.name}", description=guild.description or "No server description set.", color=discord.Color.blue())
-    
+
     # Members count
     total_members = guild.member_count
     bots = len([m for m in guild.members if m.bot])
     humans = total_members - bots
-    
+
     # Check if members list is populated (requires intents.members)
     if total_members > 0 and not guild.members:
          # Fallback if members are not cached
          bots = "Unknown (Enable Intents)"
          humans = "Unknown (Enable Intents)"
-    
+
     # Formatting bits
     created_at = guild.created_at.strftime("%B %d, %Y")
-    
+
     embed.set_thumbnail(url=guild.icon.url if guild.icon else None)
     embed.add_field(name="👑 Owner", value=guild.owner.mention, inline=True)
     embed.add_field(name="🆔 ID", value=guild.id, inline=True)
     embed.add_field(name="📅 Created On", value=created_at, inline=True)
-    
+
     embed.add_field(name="👥 Members", value=f"**Total:** {total_members}\n👤 **Humans:** {humans}\n🤖 **Bots:** {bots}", inline=True)
     embed.add_field(name="✨ Features", value="\n".join([f"• {f.replace('_', ' ').title()}" for f in guild.features[:5]]) or "None", inline=True)
     embed.add_field(name="📊 Stats", value=f"🎭 **Roles:** {len(guild.roles)}\n📁 **Categories:** {len(guild.categories)}\n💬 **Text:** {len(guild.text_channels)}\n🔊 **Voice:** {len(guild.voice_channels)}", inline=True)
-    
+
     if guild.banner:
         embed.set_image(url=guild.banner.url)
-    
+
     embed.set_footer(text=f"Requested by {interaction.user.name}", icon_url=interaction.user.display_avatar.url)
     await interaction.response.send_message(embed=embed)
 
 @bot.tree.command(name="userinfo", description="Display detailed information about a member")
 async def userinfo(interaction: discord.Interaction, member: discord.Member = None):
     member = member or interaction.user
-    
+
     roles = [role.mention for role in member.roles[1:]] # Exclude @everyone
     roles.reverse()
-    
+
     embed = discord.Embed(title=f"👤 User Profile - {member.name}", color=member.color)
     embed.set_thumbnail(url=member.display_avatar.url)
-    
+
     embed.add_field(name="📝 Name", value=f"**{member.name}**#{member.discriminator}", inline=True)
     embed.add_field(name="🆔 ID", value=member.id, inline=True)
     embed.add_field(name="🏷️ Nickname", value=member.nick or "None", inline=True)
-    
+
     embed.add_field(name="📅 Joined Discord", value=member.created_at.strftime("%B %d, %Y"), inline=True)
     embed.add_field(name="📥 Joined Server", value=member.joined_at.strftime("%B %d, %Y") if member.joined_at else "Unknown", inline=True)
     embed.add_field(name="⭐ Top Role", value=member.top_role.mention, inline=True)
-    
+
     embed.add_field(name=f"🎭 Roles ({len(roles)})", value=" ".join(roles[:10]) + ("..." if len(roles) > 10 else ""), inline=False)
-    
+
     embed.set_footer(text=f"Requested by {interaction.user.name}", icon_url=interaction.user.display_avatar.url)
     await interaction.response.send_message(embed=embed)
 
@@ -559,7 +560,7 @@ async def rps(interaction: discord.Interaction, choice: app_commands.Choice[str]
     choices = ["rock", "paper", "scissors"]
     bot_choice = random.choice(choices)
     user_choice = choice.value
-    
+
     result = ""
     if user_choice == bot_choice:
         result = "It's a **Draw**! 🤝"
@@ -572,9 +573,9 @@ async def rps(interaction: discord.Interaction, choice: app_commands.Choice[str]
     else:
         result = "You **Lost**! 💀"
         color = discord.Color.red()
-        
+
     emojis = {"rock": "🪨", "paper": "📄", "scissors": "✂️"}
-    
+
     embed = discord.Embed(title="Rock Paper Scissors", color=color)
     embed.add_field(name="You", value=f"{emojis[user_choice]} {user_choice.title()}", inline=True)
     embed.add_field(name="AI Bot", value=f"{emojis[bot_choice]} {bot_choice.title()}", inline=True)
@@ -592,7 +593,7 @@ async def eightball(interaction: discord.Interaction, question: str):
         "Don't count on it.", "My reply is no.", "My sources say no.",
         "Outlook not so good.", "Very doubtful."
     ]
-    
+
     embed = discord.Embed(title="🔮 Magic 8-Ball", color=discord.Color.purple())
     embed.add_field(name="Question", value=question, inline=False)
     embed.add_field(name="Answer", value=random.choice(responses), inline=False)
@@ -607,9 +608,9 @@ async def eightball(interaction: discord.Interaction, question: str):
 async def coinflip(interaction: discord.Interaction, choice: app_commands.Choice[str] = None):
     import random
     result = random.choice(["Heads", "Tails"])
-    
+
     embed = discord.Embed(title="🪙 Coin Flip", color=discord.Color.gold())
-    
+
     if choice:
         user_guess = choice.value
         if user_guess == result:
@@ -619,17 +620,17 @@ async def coinflip(interaction: discord.Interaction, choice: app_commands.Choice
             prediction = f"❌ Better luck next time! It's **{result}**."
             embed.color = discord.Color.red()
         embed.add_field(name="Prediction", value=prediction, inline=False)
-    
+
     if result == "Heads":
         embed.description = "The coin spins in the air and lands on... **Heads**!"
         embed.set_thumbnail(url="https://i.imgur.com/vHshU7f.png") # Generic heads icon
     else:
         embed.description = "The coin spins in the air and lands on... **Tails**!"
         embed.set_thumbnail(url="https://i.imgur.com/nCHpEWy.png") # Generic tails icon
-        
+
     embed.add_field(name="Result", value=f"✨ It's **{result}**!", inline=False)
     embed.set_footer(text=f"Flipped by {interaction.user.name}", icon_url=interaction.user.display_avatar.url)
-    
+
     await interaction.response.send_message(embed=embed)
 
 @bot.tree.command(name="pause", description="Pause the current music")
@@ -637,9 +638,9 @@ async def pause(interaction: discord.Interaction):
     vc: wavelink.Player = interaction.guild.voice_client
     if not vc or not vc.playing:
         return await interaction.response.send_message(embed=create_embed("Error", "Nothing is playing.", discord.Color.red()))
-    
+
     await vc.set_pause(True)
-    
+
     # Update control panel if it exists
     if hasattr(vc, 'controller_message') and vc.controller_message:
         view = MusicControlView(vc)
@@ -651,7 +652,7 @@ async def pause(interaction: discord.Interaction):
             await vc.controller_message.edit(view=view)
         except:
             pass
-            
+
     await interaction.response.send_message(embed=create_embed("Paused", "⏸️ Music has been paused."))
 
 @bot.tree.command(name="resume", description="Resume the current music")
@@ -659,9 +660,9 @@ async def resume(interaction: discord.Interaction):
     vc: wavelink.Player = interaction.guild.voice_client
     if not vc or not vc.paused:
         return await interaction.response.send_message(embed=create_embed("Error", "Music is not paused.", discord.Color.red()))
-    
+
     await vc.set_pause(False)
-    
+
     # Update control panel if it exists
     if hasattr(vc, 'controller_message') and vc.controller_message:
         view = MusicControlView(vc)
@@ -673,7 +674,7 @@ async def resume(interaction: discord.Interaction):
             await vc.controller_message.edit(view=view)
         except:
             pass
-            
+
     await interaction.response.send_message(embed=create_embed("Resumed", "▶️ Music has been resumed."))
 
 @bot.tree.command(name="antinuke", description="Enable or disable anti-nuke protection")
@@ -690,18 +691,18 @@ async def antinuke(interaction: discord.Interaction, status: app_commands.Choice
             config = json.load(f)
     except:
         pass
-    
+
     is_enabled = status.value == "on"
     config[str(interaction.guild.id)] = is_enabled
     with open("antinuke_config.json", "w") as f:
         json.dump(config, f)
-        
+
     embed = discord.Embed(
         title="🛡️ Anti-Nuke System",
         description=f"The anti-nuke protection has been successfully **{status.name.lower()}d**.",
         color=discord.Color.green() if is_enabled else discord.Color.red()
     )
-    
+
     if is_enabled:
         embed.add_field(
             name="✨ Protections Active",
@@ -718,7 +719,7 @@ async def antinuke(interaction: discord.Interaction, status: app_commands.Choice
             inline=False
         )
         embed.set_footer(text="Powered by Aditya Official NGT Team • Monitoring Disabled")
-        
+
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 @bot.event
@@ -735,7 +736,7 @@ async def on_guild_channel_delete(channel):
         user = entry.user
         if user.id == channel.guild.owner_id or user.id == bot.user.id:
             return
-        
+
         try:
             await channel.guild.ban(user, reason="Anti-nuke: Channel deletion detected")
             logger.info(f"Anti-nuke: Banned {user} for deleting channel {channel.name}")
@@ -756,7 +757,7 @@ async def on_guild_role_delete(role):
         user = entry.user
         if user.id == role.guild.owner_id or user.id == bot.user.id:
             return
-        
+
         try:
             await role.guild.ban(user, reason="Anti-nuke: Role deletion detected")
             logger.info(f"Anti-nuke: Banned {user} for deleting role {role.name}")
@@ -778,7 +779,7 @@ async def on_member_join(member):
             user = entry.user
             if user.id == member.guild.owner_id or user.id == bot.user.id:
                 return
-            
+
             try:
                 await member.ban(reason="Anti-nuke: Unauthorized bot addition")
                 await member.guild.ban(user, reason="Anti-nuke: Adding unauthorized bot")
@@ -789,14 +790,14 @@ async def on_member_join(member):
 @bot.tree.command(name="avatar", description="View a member's avatar in full size")
 async def avatar(interaction: discord.Interaction, member: discord.Member = None):
     member = member or interaction.user
-    
+
     embed = discord.Embed(title=f"🖼️ {member.name}'s Avatar", color=member.color or discord.Color.blue())
     embed.set_image(url=member.display_avatar.url)
-    
+
     # Add links for different formats if possible
     avatar_url = member.display_avatar.url
     embed.description = f"[Download Avatar]({avatar_url})"
-    
+
     embed.set_footer(text=f"Requested by {interaction.user.name}", icon_url=interaction.user.display_avatar.url)
     await interaction.response.send_message(embed=embed)
 
@@ -814,7 +815,7 @@ async def poll(interaction: discord.Interaction, question: str, option1: str, op
     embed.add_field(name="Option 1", value=f"1️⃣ {option1}", inline=False)
     embed.add_field(name="Option 2", value=f"2️⃣ {option2}", inline=False)
     embed.set_footer(text=f"Poll created by {interaction.user.name}")
-    
+
     await interaction.response.send_message(embed=embed)
     message = await interaction.original_response()
     await message.add_reaction("1️⃣")
@@ -841,11 +842,11 @@ async def get_ai_response(content):
 async def steal(interaction: discord.Interaction, emoji: str, name: str = None):
     try:
         await interaction.response.defer()
-        
+
         # Parse emoji URL
         import re
         import aiohttp
-        
+
         # Match standard discord emoji format <:name:id> or <a:name:id>
         match = re.search(r"<(a?):(\w+):(\d+)>", emoji)
         if match:
@@ -867,10 +868,10 @@ async def steal(interaction: discord.Interaction, emoji: str, name: str = None):
                 if resp.status != 200:
                     return await interaction.followup.send("Failed to download emoji image.")
                 image_data = await resp.read()
-                
+
         new_emoji = await interaction.guild.create_custom_emoji(name=emoji_name, image=image_data)
         await interaction.followup.send(f"Successfully stolen {new_emoji} as **{emoji_name}**!")
-        
+
     except Exception as e:
         await interaction.followup.send(f"Error: {e}")
 
@@ -916,17 +917,17 @@ async def set_prefix(ctx, new_prefix: str):
                     prefixes = json.load(f)
         except:
             pass
-            
+
         # Set the NEW prefix (replaces the old one)
         prefixes[str(ctx.guild.id)] = new_prefix
-        
+
         # Save back to file
         with open("prefixes.json", "w") as f:
             json.dump(prefixes, f)
-            
+
         # Update the bot's current prefix mapping if it's already running
         # (Though the get_prefix function will handle it on next command)
-            
+
         embed = discord.Embed(
             title="✅ Prefix Updated",
             description=f"The command prefix for this server has been changed to: `{new_prefix}`",
@@ -934,7 +935,7 @@ async def set_prefix(ctx, new_prefix: str):
         )
         embed.set_footer(text="Powered by Aditya Official NGT Team")
         await ctx.send(embed=embed)
-        
+
     except Exception as e:
         await ctx.send(f"❌ Error: {e}")
 
@@ -958,17 +959,17 @@ async def automod(interaction: discord.Interaction, type: app_commands.Choice[st
                 config = json.load(f)
         except:
             pass
-            
+
         if str(interaction.guild.id) not in config:
             config[str(interaction.guild.id)] = {}
-            
+
         config[str(interaction.guild.id)][type.value] = action.value
         if type.value == "blacklist" and words:
             config[str(interaction.guild.id)]["blacklisted_words"] = [w.strip().lower() for w in words.split(",")]
-        
+
         with open("automod.json", "w") as f:
             json.dump(config, f)
-            
+
         msg = f"AutoMod `{type.name}` set to `{action.name}`!"
         if type.value == "blacklist" and words:
             msg += f" Words: `{words}`"
@@ -976,64 +977,140 @@ async def automod(interaction: discord.Interaction, type: app_commands.Choice[st
     except Exception as e:
         await interaction.response.send_message(f"Error: {e}")
 
+@bot.tree.command(name="whitelist", description="Add or remove a user from the AutoMod whitelist")
+@app_commands.checks.has_permissions(administrator=True)
+async def whitelist(interaction: discord.Interaction, member: discord.Member):
+    try:
+        guild_id = str(interaction.guild_id)
+        config = {}
+        if os.path.exists("automod.json"):
+            with open("automod.json", "r") as f:
+                config = json.load(f)
+        
+        if guild_id not in config:
+            config[guild_id] = {}
+        
+        whitelist_list = config[guild_id].get("whitelist", [])
+        
+        if member.id in whitelist_list:
+            whitelist_list.remove(member.id)
+            msg = f"Removed **{member}** from the whitelist."
+        else:
+            whitelist_list.append(member.id)
+            msg = f"Added **{member}** to the whitelist."
+        
+        config[guild_id]["whitelist"] = whitelist_list
+        with open("automod.json", "w") as f:
+            json.dump(config, f)
+            
+        await interaction.response.send_message(embed=create_embed("AutoMod Whitelist", msg, discord.Color.green()), ephemeral=True)
+    except Exception as e:
+        await interaction.response.send_message(f"Error: {e}", ephemeral=True)
+
 # Anti-spam basic implementation
 user_messages = {}
 
 @bot.event
 async def on_message(message):
     if message.author.bot: return
-    
+
     # AutoMod Logic
     if message.guild:
         try:
-            with open("automod.json", "r") as f:
-                config = json.load(f).get(str(message.guild.id), {})
+            config = {}
+            if os.path.exists("automod.json"):
+                with open("automod.json", "r") as f:
+                    config = json.load(f).get(str(message.guild.id), {})
+
+            whitelist = config.get("whitelist", [])
             
-            # Anti-Invite
-            if config.get("anti_invite"):
-                if "discord.gg/" in message.content or "discord.com/invite/" in message.content:
-                    action = config["anti_invite"]
-                    if action in ["delete", "both"]:
-                        await message.delete()
-                    if action in ["warn", "both"]:
-                        await message.channel.send(f"{message.author.mention}, invites are not allowed!", delete_after=5)
-                    return
+            # Bypass for admins, moderators, and whitelisted users
+            if not message.author.guild_permissions.manage_messages and message.author.id not in whitelist:
+                # Anti-Invite
+                if config.get("anti_invite"):
+                    if "discord.gg/" in message.content or "discord.com/invite/" in message.content:
+                        action = config["anti_invite"]
+                        if action in ["delete", "both"]:
+                            try:
+                                await message.delete()
+                            except:
+                                pass
+                        if action in ["warn", "both"]:
+                            try:
+                                # Explicitly fetch user to ensure DM channel is available
+                                user = await bot.fetch_user(message.author.id)
+                                await user.send(f"⚠️ Warning from **{message.guild.name}**: Server invites are not allowed!")
+                            except Exception as e:
+                                print(f"DM Error (Invite): {e}")
+                                await message.channel.send(f"{message.author.mention}, invites are not allowed! (I couldn't DM you)", delete_after=5)
+                        return
 
-            # Anti-Spam (Very basic)
-            if config.get("anti_spam"):
-                user_id = message.author.id
-                now = asyncio.get_event_loop().time()
-                if user_id not in user_messages:
-                    user_messages[user_id] = []
-                user_messages[user_id].append(now)
-                # Filter to last 5 seconds
-                user_messages[user_id] = [t for t in user_messages[user_id] if now - t < 5]
-                if len(user_messages[user_id]) > 5:
-                    action = config["anti_spam"]
-                    if action in ["delete", "both"]:
-                        await message.delete()
-                    if action in ["warn", "both"]:
-                        await message.channel.send(f"{message.author.mention}, stop spamming!", delete_after=5)
-                    return
+                # Anti-Spam (Very basic)
+                if config.get("anti_spam"):
+                    user_id = message.author.id
+                    now = asyncio.get_event_loop().time()
+                    if user_id not in user_messages:
+                        user_messages[user_id] = []
+                    user_messages[user_id].append(now)
+                    # Filter to last 5 seconds
+                    user_messages[user_id] = [t for t in user_messages[user_id] if now - t < 5]
+                    if len(user_messages[user_id]) > 5:
+                        action = config["anti_spam"]
+                        if action in ["delete", "both"]:
+                            try:
+                                await message.delete()
+                            except:
+                                pass
+                        if action in ["warn", "both"]:
+                            try:
+                                user = await bot.fetch_user(message.author.id)
+                                await user.send(f"⚠️ Warning from **{message.guild.name}**: Please stop spamming!")
+                            except Exception as e:
+                                print(f"DM Error (Spam): {e}")
+                                await message.channel.send(f"{message.author.mention}, stop spamming! (I couldn't DM you)", delete_after=5)
+                        return
 
-            # Blacklist Words
-            if config.get("blacklist"):
-                blacklisted = config.get("blacklisted_words", [])
-                content_lower = message.content.lower()
-                if any(word in content_lower for word in blacklisted):
-                    action = config["blacklist"]
-                    if action in ["delete", "both"]:
-                        await message.delete()
-                    if action in ["warn", "both"]:
-                        await message.channel.send(f"{message.author.mention}, your message contained a blacklisted word!", delete_after=5)
-                    return
-        except:
-            pass
+                # Blacklist Words
+                if config.get("blacklist"):
+                    blacklisted = config.get("blacklisted_words", [])
+                    content_lower = message.content.lower()
+                    if any(word in content_lower for word in blacklisted):
+                        action = config["blacklist"]
+                        if action in ["delete", "both"]:
+                            try:
+                                await message.delete()
+                            except:
+                                pass
+                        if action in ["warn", "both"]:
+                            try:
+                                user = await bot.fetch_user(message.author.id)
+                                await user.send(f"⚠️ Warning from **{message.guild.name}**: Your message contained a blacklisted word!")
+                            except Exception as e:
+                                print(f"DM Error (Blacklist): {e}")
+                                await message.channel.send(f"{message.author.mention}, your message contained a blacklisted word! (I couldn't DM you)", delete_after=5)
+                        return
+        except Exception as e:
+            print(f"AutoMod Error: {e}")
 
-    # Rest of the on_message logic...
-    config = load_channel_config()
+        # Anti-Nuke Keyword Protection
+        if "nuke" in message.content.lower():
+            if not message.author.guild_permissions.manage_messages:
+                try:
+                    await message.delete()
+                except:
+                    pass
+                try:
+                    user = await bot.fetch_user(message.author.id)
+                    await user.send(f"⚠️ **Warning from {message.guild.name}**: Use of the word 'nuke' is strictly prohibited for security reasons!")
+                except Exception as e:
+                    print(f"DM Error (Anti-Nuke): {e}")
+                await message.channel.send(f"⚠️ {message.author.mention}, do not mention 'nuke' here! You have also been warned in your DMs.", delete_after=10)
+                return
+
+            # Rest of the on_message logic...
+            config = load_channel_config()
     channel_id = config["channels"].get(str(message.guild.id))
-    
+
     # Handle song play on mention
     content = message.content.replace(f'<@!{bot.user.id}>', '').replace(f'<@{bot.user.id}>', '').strip()
     if bot.user.mentioned_in(message) and content.lower().startswith('play '):
@@ -1041,22 +1118,22 @@ async def on_message(message):
         if search:
             if not message.author.voice:
                 return await message.channel.send(embed=create_embed("Error", "You need to join a voice channel first!", discord.Color.red()))
-            
+
             try:
                 vc: wavelink.Player = message.guild.voice_client or await message.author.voice.channel.connect(cls=wavelink.Player, self_deaf=True)
                 vc.home_channel = message.channel
-                
+
                 tracks = await wavelink.Playable.search(search)
                 if not tracks:
                     return await message.channel.send(embed=create_embed("Not Found", f"No tracks found for: `{search}`", discord.Color.orange()))
-                
+
                 track = tracks[0]
                 # Attach the requester to the track object
                 track.requester = message.author
-                
+
                 embed = get_track_embed("Playing Now", track)
                 embed.color = discord.Color.green()
-                
+
                 if vc.playing:
                     await vc.queue.put_wait(track)
                     embed.title = "Added to Queue"
