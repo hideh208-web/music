@@ -419,8 +419,18 @@ async def queue(interaction: discord.Interaction):
 async def stop(interaction: discord.Interaction):
     vc: wavelink.Player = interaction.guild.voice_client
     if vc:
+        await vc.stop()
+        vc.queue.clear()
+        await interaction.response.send_message(embed=create_embed("Stopped", "⏹️ Music has been stopped and the queue has been cleared.", discord.Color.blue()))
+    else:
+        await interaction.response.send_message(embed=create_embed("Error", "I'm not connected to any voice channel.", discord.Color.red()))
+
+@bot.tree.command(name="leave", description="Make the bot leave the voice channel")
+async def leave(interaction: discord.Interaction):
+    vc: wavelink.Player = interaction.guild.voice_client
+    if vc:
         await vc.disconnect()
-        await interaction.response.send_message(embed=create_embed("Stopped", "⏹️ Music stopped and disconnected from voice channel.", discord.Color.blue()))
+        await interaction.response.send_message(embed=create_embed("Disconnected", "👋 Left the voice channel.", discord.Color.blue()))
     else:
         await interaction.response.send_message(embed=create_embed("Error", "I'm not connected to any voice channel.", discord.Color.red()))
 
