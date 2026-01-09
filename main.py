@@ -250,19 +250,19 @@ async def on_wavelink_track_end(payload: wavelink.TrackEndEventPayload):
             await player.controller_message.delete()
         except:
             pass
-        player.controller_message = None # Clear the reference
+        player.controller_message = None
 
-    # Handle looping
+    # Handle looping logic
     if player.queue.loop:
         await player.play(payload.track)
         return
 
+    # Check for next song in queue
     if not player.queue.is_empty:
-        next_track = await player.queue.get_wait()
+        next_track = player.queue.get() # Changed get_wait() to get() for immediate play
         await player.play(next_track)
     elif player.queue.loop_all:
-        # If queue loop is on and queue is empty, we'd need history or just re-add
-        # For simple wavelink queue, we usually just re-play from a stored history if implemented
+        # Loop all logic could go here if implemented
         pass
 
 def load_channel_config():
