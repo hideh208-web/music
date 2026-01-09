@@ -71,17 +71,20 @@ class MusicControlView(discord.ui.View):
     @discord.ui.button(label="Pause", style=discord.ButtonStyle.secondary, emoji="⏸️")
     async def toggle_pause(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=True)
-        if not self.player or not self.player.playing:
+        if not self.player:
+            return await interaction.followup.send("Player not found.", ephemeral=True)
+
+        if not self.player.playing and not self.player.paused:
             return await interaction.followup.send("Nothing is playing.", ephemeral=True)
 
         # Sync state
         if self.player.paused:
-            await self.player.set_pause(False)
+            await self.player.pause(False)
             button.label = "Pause"
             button.emoji = "⏸️"
             status = "resumed"
         else:
-            await self.player.set_pause(True)
+            await self.player.pause(True)
             button.label = "Resume"
             button.emoji = "▶️"
             status = "paused"
@@ -303,7 +306,11 @@ async def play(interaction: discord.Interaction, search: str):
         track.requester = interaction.user
 
         # Deafen the bot when joining
-        vc: wavelink.Player = interaction.guild.voice_client or await interaction.user.voice.channel.connect(cls=wavelink.Player, self_deaf=True)
+        if not interaction.guild.voice_client:
+            vc: wavelink.Player = await interaction.user.voice.channel.connect(cls=wavelink.Player, self_deaf=True)
+        else:
+            vc: wavelink.Player = interaction.guild.voice_client
+            
         vc.home_channel = interaction.channel
 
         # Get track embed for immediate response
@@ -636,10 +643,16 @@ async def coinflip(interaction: discord.Interaction, choice: app_commands.Choice
 @bot.tree.command(name="pause", description="Pause the current music")
 async def pause(interaction: discord.Interaction):
     vc: wavelink.Player = interaction.guild.voice_client
-    if not vc or not vc.playing:
+    if not vc:
+        return await interaction.response.send_message(embed=create_embed("Error", "The bot is not in a voice channel.", discord.Color.red()))
+    
+    if not vc.playing and not vc.paused:
         return await interaction.response.send_message(embed=create_embed("Error", "Nothing is playing.", discord.Color.red()))
 
-    await vc.set_pause(True)
+    if vc.paused:
+        return await interaction.response.send_message(embed=create_embed("Error", "Music is already paused.", discord.Color.red()))
+
+    await vc.pause(True)
 
     # Update control panel if it exists
     if hasattr(vc, 'controller_message') and vc.controller_message:
@@ -658,10 +671,13 @@ async def pause(interaction: discord.Interaction):
 @bot.tree.command(name="resume", description="Resume the current music")
 async def resume(interaction: discord.Interaction):
     vc: wavelink.Player = interaction.guild.voice_client
-    if not vc or not vc.paused:
+    if not vc:
+        return await interaction.response.send_message(embed=create_embed("Error", "The bot is not in a voice channel.", discord.Color.red()))
+        
+    if not vc.paused:
         return await interaction.response.send_message(embed=create_embed("Error", "Music is not paused.", discord.Color.red()))
 
-    await vc.set_pause(False)
+    await vc.pause(False)
 
     # Update control panel if it exists
     if hasattr(vc, 'controller_message') and vc.controller_message:
