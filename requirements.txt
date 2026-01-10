@@ -9,3 +9,10 @@ gunicorn
 python-dotenv
 wavelink
 pynacl
+discord.py
+flask
+groq
+gunicorn
+python-dotenv
+wavelink
+google-generativeai
