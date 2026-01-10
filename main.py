@@ -4,7 +4,7 @@ import logging
 import json
 import discord
 import sys
-import google.generativeai as genai
+from openai import OpenAI
 from discord import app_commands
 from discord.ext import commands
 from flask import Flask
@@ -26,15 +26,15 @@ logger = logging.getLogger(__name__)
 
 # Load tokens
 discord_token = os.environ.get('DISCORD_TOKEN')
-gemini_api_key = os.environ.get('GEMINI_API_KEY')
+perplexity_api_key = os.environ.get('PERPLEXITY_API_KEY')
 
-if not discord_token or not gemini_api_key:
-    logger.error("Missing DISCORD_TOKEN or GEMINI_API_KEY")
+if not discord_token or not perplexity_api_key:
+    logger.error("Missing DISCORD_TOKEN or PERPLEXITY_API_KEY")
     exit(1)
 
-# Gemini Configuration
-genai.configure(api_key=gemini_api_key)
-model = genai.GenerativeModel('gemini-pro')
+# Perplexity Configuration
+# Perplexity uses an OpenAI-compatible API
+client = OpenAI(api_key=perplexity_api_key, base_url="https://api.perplexity.ai")
 
 # Bot setup
 intents = discord.Intents.default()
@@ -42,25 +42,34 @@ intents.message_content = True
 intents.members = True # Required for serverinfo and userinfo
 bot = commands.Bot(command_prefix="$", intents=intents)
 
-@bot.tree.command(name="chat", description="Chat with Gemini AI")
+@bot.tree.command(name="chat", description="Chat with Perplexity AI")
 async def chat(interaction: discord.Interaction, message: str):
     await interaction.response.defer()
     try:
-        response = model.generate_content(message)
-        if response.text:
-            content = response.text
+        response = client.chat.completions.create(
+            model="sonar",
+            messages=[{"role": "user", "content": message}]
+        )
+        content = response.choices[0].message.content
+        if content:
             if len(content) > 1900:
                 content = content[:1900] + "..."
             await interaction.followup.send(content)
         else:
-            await interaction.followup.send("Gemini couldn't generate a response.")
+            await interaction.followup.send("Perplexity couldn't generate a response.")
     except Exception as e:
-        logger.error(f"Gemini error: {e}")
+        logger.error(f"Perplexity error: {e}")
         await interaction.followup.send(f"An error occurred: {str(e)}")
 
 @bot.event
 async def on_message(message):
     if message.author == bot.user:
+        return
+
+    # Skip processing if it's a command to prevent double response
+    ctx = await bot.get_context(message)
+    if ctx.valid:
+        await bot.process_commands(message)
         return
 
     if bot.user.mentioned_in(message):
@@ -69,10 +78,14 @@ async def on_message(message):
                 prompt = message.content.replace(f'<@!{bot.user.id}>', '').replace(f'<@{bot.user.id}>', '').strip()
                 if not prompt:
                     prompt = "Hello!"
-                response = model.generate_content(prompt)
-                await message.reply(response.text if response.text else "I'm not sure what to say.")
+                response = client.chat.completions.create(
+                    model="sonar",
+                    messages=[{"role": "user", "content": prompt}]
+                )
+                content = response.choices[0].message.content
+                await message.reply(content if content else "I'm not sure what to say.")
             except Exception as e:
-                logger.error(f"Gemini error: {e}")
+                logger.error(f"Perplexity error: {e}")
                 await message.reply("Sorry, I'm having trouble thinking right now.")
 
     await bot.process_commands(message)
