@@ -27,6 +27,31 @@ logger = logging.getLogger(__name__)
 # Flask server
 app = Flask('')
 
+# Start the bot when the Flask app starts
+def run_bot_in_thread():
+    # Set up a new event loop for this thread to avoid loop conflicts
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        # Use run_until_complete with the bot's start coroutine
+        # but we need to make sure the loop is correctly handled.
+        # discord.py's run() actually does this under the hood, 
+        # but the error comes from aiohttp/asyncio interaction.
+        bot.run(discord_token)
+    except Exception as e:
+        logger.error(f"Bot thread error: {e}")
+
+bot_thread_started = False
+
+@app.before_request
+def start_bot_once():
+    global bot_thread_started
+    if not bot_thread_started:
+        bot_thread_started = True
+        t = Thread(target=run_bot_in_thread)
+        t.daemon = True
+        t.start()
+
 @app.route('/')
 def home():
     return "I'm alive!"
@@ -208,7 +233,7 @@ bot.setup_hook = setup_hook
 
 def create_embed(title, description, color=discord.Color.blue()):
     embed = discord.Embed(title=title, description=description, color=color)
-    embed.set_footer(text="Powered by Aditya Official NGT Team")
+    embed.set_footer(text="Powered by Hideout Team")
     return embed
 
 def get_track_embed(title, track):
@@ -222,7 +247,7 @@ def get_track_embed(title, track):
     embed.add_field(name="Duration", value=duration, inline=True)
     if hasattr(track, 'artwork'):
         embed.set_thumbnail(url=track.artwork)
-    embed.set_footer(text="Powered by Aditya Official NGT Team")
+    embed.set_footer(text="Powered by Hideout Team")
     return embed
 
 @bot.event
@@ -261,9 +286,13 @@ async def on_wavelink_track_end(payload: wavelink.TrackEndEventPayload):
     if not player.queue.is_empty:
         next_track = player.queue.get() # Changed get_wait() to get() for immediate play
         await player.play(next_track)
-    elif player.queue.loop_all:
-        # Loop all logic could go here if implemented
-        pass
+    else:
+        # 10 second auto-leave
+        await asyncio.sleep(10)
+        if not player.playing and player.queue.is_empty:
+            await player.disconnect()
+            if hasattr(player, 'home_channel'):
+                await player.home_channel.send(embed=create_embed("Disconnected", "Queue ended, leaving voice channel after 10 seconds of inactivity.", discord.Color.blue()))
 
 def load_channel_config():
     try:
@@ -315,7 +344,10 @@ async def play(interaction: discord.Interaction, search: str):
 
         # Deafen the bot when joining
         if not interaction.guild.voice_client:
-            vc: wavelink.Player = await interaction.user.voice.channel.connect(cls=wavelink.Player, self_deaf=True)
+            try:
+                vc: wavelink.Player = await interaction.user.voice.channel.connect(cls=wavelink.Player, self_deaf=True)
+            except asyncio.TimeoutError:
+                return await interaction.followup.send(embed=create_embed("Connection Timeout", "Unable to connect to the voice channel. Please try again later.", discord.Color.red()))
         else:
             vc: wavelink.Player = interaction.guild.voice_client
 
@@ -1180,7 +1212,14 @@ async def on_message(message):
                 return await message.channel.send(embed=create_embed("Error", "You need to join a voice channel first!", discord.Color.red()))
 
             try:
-                vc: wavelink.Player = message.guild.voice_client or await message.author.voice.channel.connect(cls=wavelink.Player, self_deaf=True)
+                if not message.guild.voice_client:
+                    try:
+                        vc: wavelink.Player = await message.author.voice.channel.connect(cls=wavelink.Player, self_deaf=True)
+                    except asyncio.TimeoutError:
+                        return await message.channel.send(embed=create_embed("Connection Timeout", "Unable to connect to the voice channel. Please try again later.", discord.Color.red()))
+                else:
+                    vc: wavelink.Player = message.guild.voice_client
+                
                 vc.home_channel = message.channel
 
                 tracks = await wavelink.Playable.search(search)
@@ -1209,5 +1248,7 @@ async def on_message(message):
     await bot.process_commands(message)
 
 if __name__ == "__main__":
+    # If running locally (not via Gunicorn), keep_alive() starts Flask in a thread
+    # and bot.run() runs in the main thread.
     keep_alive()
     bot.run(discord_token)
